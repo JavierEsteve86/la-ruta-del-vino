@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>La Ruta del Vino | Administración</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{--wine:#35151f;--gold:#c6a66a;--cream:#f6f1e8;--paper:#fffdfa;--ink:#27211f;--muted:#817772;--line:#e8dfd3;--green:#427253;--red:#9a4d42}
+*{box-sizing:border-box}body{margin:0;background:var(--cream);color:var(--ink);font-family:Arial,Helvetica,sans-serif}
+header{background:var(--wine);color:white;padding:20px max(18px,calc((100vw - 1180px)/2));display:flex;justify-content:space-between;align-items:center;gap:12px}
+h1{font:26px Georgia,serif;margin:0}.sub{font-size:12px;color:#e6d8d4;margin-top:5px}
+main{max-width:1180px;margin:28px auto;padding:0 18px}.panel{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:18px}
+h2{font:24px Georgia,serif;color:var(--wine);margin:0 0 15px}
+label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+input,button{font:14px Arial;border-radius:7px;padding:11px;border:1px solid #ded3c8}
+input{width:100%;background:white;color:var(--ink)}button{cursor:pointer;background:var(--wine);color:white;border-color:var(--wine);font-weight:bold}
+button.secondary{background:white;color:var(--wine)}button:disabled{opacity:.55;cursor:wait}
+.login{max-width:420px;margin:8vh auto}.fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.field{min-width:0}
+.toolbar{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin:14px 0}.toolbar .field{flex:1;min-width:200px}
+.tablewrap{overflow:auto;border:1px solid var(--line);border-radius:9px}table{width:100%;border-collapse:collapse;min-width:850px}th,td{text-align:left;padding:10px;border-bottom:1px solid var(--line);font-size:13px}th{background:#eee5d9;color:var(--wine);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+td input{min-width:85px;padding:8px}.name{font-weight:bold;color:var(--wine)}.muted{color:var(--muted);font-size:12px}.status{font-size:13px;margin:12px 0;color:var(--green)}.error{color:var(--red)}.actions{display:flex;gap:8px;align-items:center}.hidden{display:none!important}.topline{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+@media(max-width:650px){.fields{grid-template-columns:1fr}header{align-items:flex-start;flex-direction:column}}
+</style>
+</head>
+<body>
+<header><div><h1>La Ruta del Vino</h1><div class="sub">Panel privado de administración del catálogo</div></div><button id="logout" class="secondary hidden">Cerrar sesión</button></header>
+<main>
+<section id="loginPanel" class="panel login">
+<h2>Ingresar</h2>
+<p class="muted">Acceso exclusivo para usuarios autorizados.</p>
+<div class="field"><label for="email">Correo electrónico</label><input id="email" type="email" autocomplete="username"></div>
+<div class="field" style="margin-top:12px"><label for="password">Contraseña</label><input id="password" type="password" autocomplete="current-password"></div>
+<button id="login" style="width:100%;margin-top:16px">Iniciar sesión</button>
+<div id="loginStatus" class="status" role="status"></div>
+</section>
+
+<section id="adminPanel" class="hidden">
+<div class="panel">
+<div class="topline"><div><h2>Catálogo</h2><div class="muted">Editá precios, stock, presentación y estado. Los cambios se guardan en Supabase.</div></div><div class="actions"><button id="reload" class="secondary">Actualizar</button></div></div>
+<div class="toolbar">
+<div class="field"><label for="search">Buscar vino o bodega</label><input id="search" placeholder="Ej. Malbec, Catena..."></div>
+<div class="field"><label for="activeFilter">Estado</label><select id="activeFilter"><option value="all">Todos</option><option value="true">Activos</option><option value="false">Inactivos</option></select></div>
+</div>
+<div id="adminStatus" class="status" role="status"></div>
+<div class="tablewrap"><table><thead><tr><th>Bodega / vino</th><th>Precio ARS</th><th>Precio BRL</th><th>Stock (cajas)</th><th>Botellas/caja</th><th>Activo</th><th>Acción</th></tr></thead><tbody id="wineRows"><tr><td colspan="7">Cargando…</td></tr></tbody></table></div>
+</div>
+</section>
+</main>
+<script>
+const SUPABASE_URL = "https://qlrrudtfytbrkrhzswxe.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_R13ohRywkCURv2dVWRL-uA_XZvX4KTP";
+const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+let wines = [];
+const $ = id => document.getElementById(id);
+function message(id, text, error=false){$(id).textContent=text;$(id).className='status'+(error?' error':'');}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+async function checkAdmin(user){
+  const {data,error}=await db.from('admin_users').select('user_id').eq('user_id',user.id).maybeSingle();
+  if(error) throw error;
+  if(!data) throw new Error('Tu usuario inició sesión, pero no tiene permisos de administrador.');
+}
+async function showSession(session){
+  if(!session){$('loginPanel').classList.remove('hidden');$('adminPanel').classList.add('hidden');$('logout').classList.add('hidden');return;}
+  try{
+    await checkAdmin(session.user);
+    $('loginPanel').classList.add('hidden');$('adminPanel').classList.remove('hidden');$('logout').classList.remove('hidden');
+    await loadWines();
+  }catch(e){
+    await db.auth.signOut();
+    $('loginPanel').classList.remove('hidden');
+    message('loginStatus',e.message,true);
+  }
+}
+async function loadWines(){
+  message('adminStatus','Consultando Supabase…');
+  const {data,error}=await db.from('wines').select('id,name,price_ars,price_brl,stock,units_per_case,active,wineries(name)').order('name');
+  if(error){message('adminStatus','No se pudo leer el catálogo: '+error.message,true);return;}
+  wines=data||[];renderRows();
+  message('adminStatus',wines.length+' productos cargados.');
+}
+function renderRows(){
+  const q=$('search').value.trim().toLowerCase(), f=$('activeFilter').value;
+  const list=wines.filter(w=>{
+    const brand=w.wineries?.name||'';
+    return (!q||(w.name+' '+brand).toLowerCase().includes(q))&&(f==='all'||String(w.active)===f);
+  });
+  $('wineRows').innerHTML='';
+  if(!list.length){$('wineRows').innerHTML='<tr><td colspan="7">No hay productos para mostrar.</td></tr>';return;}
+  list.forEach(w=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td><div class="muted">${esc(w.wineries?.name||'Sin bodega')}</div><div class="name">${esc(w.name)}</div></td>
+    <td><input aria-label="Precio ARS" type="number" min="0" step="0.01" data-field="price_ars" value="${Number(w.price_ars)||0}"></td>
+    <td><input aria-label="Precio BRL" type="number" min="0" step="0.01" data-field="price_brl" value="${Number(w.price_brl)||0}"></td>
+    <td><input aria-label="Stock" type="number" min="0" step="1" data-field="stock" value="${Number(w.stock)||0}"></td>
+    <td><input aria-label="Botellas por caja" type="number" min="1" step="1" data-field="units_per_case" value="${Number(w.units_per_case)||6}"></td>
+    <td><input aria-label="Activo" type="checkbox" data-field="active" ${w.active?'checked':''} style="width:auto"></td>
+    <td><button data-save="${esc(w.id)}">Guardar</button></td>`;
+    $('wineRows').appendChild(tr);
+  });
+}
+async function saveRow(id,button){
+  const tr=button.closest('tr'),patch={};
+  tr.querySelectorAll('[data-field]').forEach(el=>{
+    patch[el.dataset.field]=el.type==='checkbox'?el.checked:Number(el.value);
+  });
+  if(['price_ars','price_brl','stock'].some(k=>patch[k]<0)||patch.units_per_case<1){
+    message('adminStatus','Revisá los valores: precios y stock no pueden ser negativos; botellas/caja debe ser al menos 1.',true);return;
+  }
+  button.disabled=true;button.textContent='Guardando…';
+  const {error}=await db.from('wines').update(patch).eq('id',id);
+  button.disabled=false;button.textContent='Guardar';
+  if(error){message('adminStatus','No se pudo guardar: '+error.message,true);return;}
+  const index=wines.findIndex(w=>String(w.id)===String(id));
+  if(index>=0)wines[index]={...wines[index],...patch};
+  message('adminStatus','Cambios guardados correctamente.');
+}
+$('login').addEventListener('click',async()=>{
+  message('loginStatus','Validando…');
+  const {data,error}=await db.auth.signInWithPassword({email:$('email').value.trim(),password:$('password').value});
+  if(error){message('loginStatus',error.message,true);return;}
+  await showSession(data.session);
+});
+$('logout').addEventListener('click',async()=>{await db.auth.signOut();});
+$('reload').addEventListener('click',loadWines);
+$('search').addEventListener('input',renderRows);
+$('activeFilter').addEventListener('change',renderRows);
+$('wineRows').addEventListener('click',e=>{const b=e.target.closest('[data-save]');if(b)saveRow(b.dataset.save,b);});
+db.auth.onAuthStateChange((_event,session)=>{showSession(session);});
+db.auth.getSession().then(({data})=>showSession(data.session));
+</script>
+</body>
+</html>
